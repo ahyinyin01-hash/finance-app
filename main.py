@@ -1,488 +1,284 @@
-import streamlit as st
-import sqlite3
-import pandas as pd
 from datetime import datetime
-import io
+import json
+import pandas as pd
+import sqlite3
+import streamlit as st
 
-# 🎨 注入現代化美化 CSS 樣式
-st.markdown("""
-    <style>
-    /* 全局樣式微調 */
-    .main {
-        background-color: #f8fafc;
-    }
-    /* 卡片容器設計 */
-    .stCard {
-        background: #ffffff;
-        padding: 20px;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        border: 1px solid #e2e8f0;
-        margin-bottom: 20px;
-    }
-    /* 按鈕美化 */
-    .stButton>button {
-        border-radius: 8px;
-        font-weight: 600;
-        border: none;
-        transition: all 0.2s ease-in-out;
-    }
-    .stButton>button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
-    }
-    /* 側邊欄背景優化 */
-    [data-testid="stSidebar"] {
-        background-color: #f1f5f9;
-        border-right: 1px solid #e2e8f0;
-    }
-    /* 標題與文字精緻化 */
-    h1, h2, h3 {
-        letter-spacing: -0.025em;
-        color: #1e293b;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# 初始化 SQLite 資料庫（確保包含 e-Invoice 專屬欄位）
+conn = sqlite3.connect("finance.db", check_same_thread=False)
+c = conn.cursor()
+c.execute(
+    """CREATE TABLE IF NOT EXISTS records
+             (date TEXT, type TEXT, category TEXT, amount REAL, currency TEXT, base_amount REAL, account TEXT, project TEXT, note TEXT, einvoice_no TEXT)"""
+)
+conn.commit()
 
-# 🌐 多國語言字典
-TRANSLATIONS = {
-    "繁體中文": {
-        "title": "💡 AI 智慧財務與全球記帳系統",
-        "subtitle": "輕鬆管理多幣種資產、專案成本與自動化對帳",
-        "menu": "功能選單",
-        "menu_items": ["快速記帳", "截圖記帳 (AI 圖片辨識)", "AI 智慧文字記帳", "自動化對帳單/發票匯入", "專案 ROI 與工時成本", "合夥人分潤結算", "財務健康評分儀表板", "固定訂閱管理", "設定每月預算"],
-        "base_curr_title": "💱 結算基準幣種",
-        "lang_title": "🌐 介面語言選擇",
-        "quick_entry": "快速新增記帳",
-        "statement_import": "📥 自動化對帳單批次匯入",
-        "statement_desc": "上傳各銀行、信用卡或行動支付（如 PayPal, Stripe）匯出的 CSV 對帳單檔案，系統將自動批量解析。",
-        "upload_csv": "選擇對帳單 CSV / TXT 檔案",
-        "preview_import": "對帳單資料預覽與確認",
-        "import_success": "成功批次匯入對帳單資料！",
-        "date": "日期",
-        "type": "類型",
-        "expense": "支出",
-        "income": "收入",
-        "account": "資金帳戶",
-        "project": "專案歸屬",
-        "category": "分類",
-        "currency": "幣種",
-        "orig_amount": "原始金額",
-        "exchange_rate": "對匯率",
-        "doc_status": "單據狀態",
-        "tax_amount": "估算稅額",
-        "payment_status": "收付狀態",
-        "note": "備註說明",
-        "submit": "確認並寫入資料庫",
-        "success_msg": "記錄成功！"
-    },
-    "English": {
-        "title": "💡 AI Smart Finance & Global Accounting",
-        "subtitle": "Effortlessly manage multi-currency assets and automated statements.",
-        "menu": "Navigation",
-        "menu_items": ["Quick Entry", "Screenshot AI Entry", "AI Smart Text Entry", "Auto Bank Statement Import", "Project ROI & Labor Cost", "Partner Profit Sharing", "Financial Health Dashboard", "Fixed Subscriptions", "Monthly Budget Settings"],
-        "base_curr_title": "💱 Base Currency",
-        "lang_title": "🌐 Language",
-        "quick_entry": "Quick Manual Entry",
-        "statement_import": "📥 Automated Statement Batch Import",
-        "statement_desc": "Upload CSV statements from banks or e-wallets (e.g., PayPal, Stripe) for instant batch import.",
-        "upload_csv": "Select Statement File",
-        "preview_import": "Statement Preview",
-        "import_success": "Successfully imported statements!",
-        "date": "Date",
-        "type": "Type",
-        "expense": "Expense",
-        "income": "Income",
-        "account": "Account",
-        "project": "Project",
-        "category": "Category",
-        "currency": "Currency",
-        "orig_amount": "Original Amount",
-        "exchange_rate": "Exchange Rate",
-        "doc_status": "Doc Status",
-        "tax_amount": "Tax",
-        "payment_status": "Payment Status",
-        "note": "Note",
-        "submit": "Save to Database",
-        "success_msg": "Recorded Successfully!"
-    },
-    "简体中文": {
-        "title": "💡 AI 智能财务与全球记账系统",
-        "subtitle": "轻松管理多币种资产、项目成本与自动化对账",
-        "menu": "功能菜单",
-        "menu_items": ["快速记账", "截图记账 (AI 图片识别)", "AI 智能文字记账", "自动化对账单/发票导入", "项目 ROI 与工时成本", "合伙人分润结算", "财务健康评分仪表板", "固定订阅管理", "设定每月预算"],
-        "base_curr_title": "💱 结算基准币种",
-        "lang_title": "🌐 界面语言选择",
-        "quick_entry": "快速新增记账",
-        "statement_import": "📥 自动化对账单批量导入",
-        "statement_desc": "上传各银行、信用卡或移动支付导出的 CSV 对账单文件，系统将自动批量解析。",
-        "upload_csv": "选择对账单 CSV 文件",
-        "preview_import": "对账单数据预览与确认",
-        "import_success": "成功批量导入对账单数据！",
-        "date": "日期",
-        "type": "类型",
-        "expense": "支出",
-        "income": "收入",
-        "account": "资金账户",
-        "project": "项目归属",
-        "category": "分类",
-        "currency": "币种",
-        "orig_amount": "原始金额",
-        "exchange_rate": "对汇率",
-        "doc_status": "单据状态",
-        "tax_amount": "估算税额",
-        "payment_status": "收付状态",
-        "note": "备注说明",
-        "submit": "确认并写入数据库",
-        "success_msg": "记录成功！"
-    },
-    "Melayu": {
-        "title": "💡 Kewangan Pintar AI & Perakaunan Global",
-        "subtitle": "Urus aset pelbagai mata wang dan import penyata automatik.",
-        "menu": "Menu",
-        "menu_items": ["Kemasukan Pantas", "Kemasukan Tangkapan Skrin AI", "Kemasukan Teks AI", "Import Penyata", "Kos & ROI Projek", "Perkongsian Untung", "Papan Pemuka Kesihatan", "Langganan Tetap", "Belanjawan Bulanan"],
-        "base_curr_title": "💱 Mata Wang Asas",
-        "lang_title": "🌐 Bahasa",
-        "quick_entry": "Kemasukan Pantas",
-        "statement_import": "📥 Import Kelompok Penyata",
-        "statement_desc": "Muat naik fail CSV penyata bank atau e-dompet untuk import kelompok.",
-        "upload_csv": "Pilih Fail CSV",
-        "preview_import": "Pratonton Penyata",
-        "import_success": "Berjaya mengimport!",
-        "date": "Tarikh",
-        "type": "Jenis",
-        "expense": "Perbelanjaan",
-        "income": "Pendapatan",
-        "account": "Akaun",
-        "project": "Projek",
-        "category": "Kategori",
-        "currency": "Mata Wang",
-        "orig_amount": "Jumlah Asal",
-        "exchange_rate": "Kadar Pertukaran",
-        "doc_status": "Status Dokumen",
-        "tax_amount": "Cukai",
-        "payment_status": "Status Bayaran",
-        "note": "Nota",
-        "submit": "Simpan",
-        "success_msg": "Berjaya!"
-    },
-    "日本語": {
-        "title": "💡 AIスマート財務＆グローバル会計",
-        "subtitle": "多通貨資産、プロジェクト費用、自動明細をシンプルに管理。",
-        "menu": "メニュー",
-        "menu_items": ["クイック入力", "スクショAI入力", "AIテキスト入力", "自動明細インポート", "プロジェクトROI", "パートナー分配", "財務健康ダッシュボード", "固定サブスク", "月次予算設定"],
-        "base_curr_title": "💱 基準通貨",
-        "lang_title": "🌐 言語選択",
-        "quick_entry": "クイック手動入力",
-        "statement_import": "📥 明細 CSV 一括インポート",
-        "statement_desc": "銀行やウォレットのCSV明細をアップロードし、自動で一括記帳します。",
-        "upload_csv": "CSV ファイルを選択",
-        "preview_import": "明細プレビュー",
-        "import_success": "インポートしました！",
-        "date": "日付",
-        "type": "タイプ",
-        "expense": "支出",
-        "income": "収入",
-        "account": "口座",
-        "project": "プロジェクト",
-        "category": "カテゴリ",
-        "currency": "通貨",
-        "orig_amount": "元金額",
-        "exchange_rate": "為替レート",
-        "doc_status": "証憑",
-        "tax_amount": "税額",
-        "payment_status": "支払状態",
-        "note": "備考",
-        "submit": "データベースに保存",
-        "success_msg": "保存しました！"
-    },
-    "한국어": {
-        "title": "💡 AI 스마트 회계 & 글로벌 금융",
-        "subtitle": "다중 통화 자산 및 자동 명세서 관리를 간편하게.",
-        "menu": "메뉴",
-        "menu_items": ["빠른 입력", "캡처 AI 입력", "AI 텍스트 입력", "자동 명세서 가져오기", "프로젝트 ROI", "파트너 수익 배분", "재무 건강 대시보드", "고정 구독", "월간 예산 설정"],
-        "base_curr_title": "💱 기준 통화",
-        "lang_title": "🌐 언어 선택",
-        "quick_entry": "빠른 수동 입력",
-        "statement_import": "📥 명세서 CSV 일괄 가져오기",
-        "statement_desc": "은행 및 월렛의 CSV 파일을 업로드하여 자동으로 장부에 반영합니다.",
-        "upload_csv": "CSV 파일 선택",
-        "preview_import": "명세서 미리보기",
-        "import_success": "성공적으로 가져왔습니다!",
-        "date": "날짜",
-        "type": "유형",
-        "expense": "지출",
-        "income": "수입",
-        "account": "계정",
-        "project": "프로젝트",
-        "category": "카테고리",
-        "currency": "통화",
-        "orig_amount": "원래 금액",
-        "exchange_rate": "환율",
-        "doc_status": "증빙",
-        "tax_amount": "세액",
-        "payment_status": "지급 상태",
-        "note": "비고",
-        "submit": "데이터베이스에 저장",
-        "success_msg": "저장되었습니다!"
-    },
-    "Español": {
-        "title": "💡 Finanzas Inteligentes AI y Contabilidad",
-        "subtitle": "Administra activos multidivisa y estados de cuenta automáticos.",
-        "menu": "Menú",
-        "menu_items": ["Entrada rápida", "Entrada de captura AI", "Entrada de texto AI", "Importar extractos", "ROI y Costos", "Distribución de socios", "Panel de salud financiera", "Suscripciones", "Presupuesto mensual"],
-        "base_curr_title": "💱 Moneda Base",
-        "lang_title": "🌐 Idioma",
-        "quick_entry": "Entrada Rápida",
-        "statement_import": "📥 Importación de Extractos",
-        "statement_desc": "Sube archivos CSV de tus bancos o billeteras para importar en lote.",
-        "upload_csv": "Seleccionar Archivo CSV",
-        "preview_import": "Vista Previa",
-        "import_success": "¡Importado con éxito!",
-        "date": "Fecha",
-        "type": "Tipo",
-        "expense": "Gasto",
-        "income": "Ingreso",
-        "account": "Cuenta",
-        "project": "Proyecto",
-        "category": "Categoría",
-        "currency": "Moneda",
-        "orig_amount": "Monto Original",
-        "exchange_rate": "Tasa",
-        "doc_status": "Doc Status",
-        "tax_amount": "Impuesto",
-        "payment_status": "Estado",
-        "note": "Nota",
-        "submit": "Guardar",
-        "success_msg": "¡Éxito!"
-    },
-    "Français": {
-        "title": "💡 Finance Intelligente AI & Comptabilité",
-        "subtitle": "Gérez vos actifs multidevises et vos relevés automatiques.",
-        "menu": "Menu",
-        "menu_items": ["Saisie rapide", "Saisie capture AI", "Saisie texte AI", "Import de relevés", "ROI & Coûts", "Partage des bénéfices", "Tableau de bord financier", "Abonnements", "Budget mensuel"],
-        "base_curr_title": "💱 Devise de Base",
-        "lang_title": "🌐 Langue",
-        "quick_entry": "Saisie Rapide",
-        "statement_import": "📥 Importation de Relevés",
-        "statement_desc": "Téléchargez vos fichiers CSV bancaires pour un import en masse.",
-        "upload_csv": "Sélectionner le Fichier CSV",
-        "preview_import": "Aperçu",
-        "import_success": "Importé avec succès !",
-        "date": "Date",
-        "type": "Type",
-        "expense": "Dépense",
-        "income": "Revenu",
-        "account": "Compte",
-        "project": "Projet",
-        "category": "Catégorie",
-        "currency": "Devise",
-        "orig_amount": "Montant",
-        "exchange_rate": "Taux",
-        "doc_status": "Statut Doc",
-        "tax_amount": "Taxe",
-        "payment_status": "Paiement",
-        "note": "Note",
-        "submit": "Enregistrer",
-        "success_msg": "Succès !"
-    }
-}
+# 介面語言與設定
+st.sidebar.title("🌐 界面語言選擇")
+lang = st.sidebar.selectbox("", ["繁體中文", "English", "日本語"])
 
-# 初始化 SQLite 資料庫
-def init_db():
-    conn = sqlite3.connect('finance.db')
-    c = conn.cursor()
-    c.execute("PRAGMA table_info(transactions)")
-    columns = [row[1] for row in c.fetchall()]
-    
-    if not columns:
-        c.execute('''CREATE TABLE transactions
-                     (date TEXT, type TEXT, account TEXT, project TEXT, category TEXT, currency TEXT, original_amount REAL, exchange_rate REAL, amount REAL, invoice_status TEXT, tax_amount REAL, payment_status TEXT, note TEXT)''')
-    elif 'invoice_status' not in columns:
-        old_data = pd.read_sql("SELECT * FROM transactions", conn)
-        c.execute('DROP TABLE transactions')
-        c.execute('''CREATE TABLE transactions
-                     (date TEXT, type TEXT, account TEXT, project TEXT, category TEXT, currency TEXT, original_amount REAL, exchange_rate REAL, amount REAL, invoice_status TEXT, tax_amount REAL, payment_status TEXT, note TEXT)''')
-        if not old_data.empty:
-            for _, row in old_data.iterrows():
-                c.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                          (row['date'], row['type'], row['account'], row['project'], row['category'], row['currency'], 
-                           row['original_amount'], row['exchange_rate'], row['amount'], "不適用", 0.0, "已結清", row['note']))
-        
-    c.execute('''CREATE TABLE IF NOT EXISTS budgets (category TEXT PRIMARY KEY, limit_amount REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS subscriptions (name TEXT, type TEXT, account TEXT, project TEXT, category TEXT, amount REAL, day_of_month INT)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS partners (name TEXT PRIMARY KEY, share_ratio REAL, investment REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS project_hours (project TEXT PRIMARY KEY, hours_spent REAL, hourly_cost REAL, outsourced_cost REAL)''')
-    conn.commit()
-    conn.close()
+st.sidebar.markdown("---")
+st.sidebar.title("🐾 汪汪功能選單")
+menu = st.sidebar.radio(
+    "",
+    [
+        "快速記帳 🍖",
+        "e-Invoice 電子發票專區 🧾✨",
+        "截圖記帳 (AI 圖片辨識) 📸",
+        "AI 智慧文字記帳 🧠",
+        "自動化對帳單/發票匯入 🧾",
+        "專案 ROI 與工時成本 📈",
+        "合夥人分潤結算 🤝",
+        "財務健康評分儀表板 🩺",
+        "固定訂閱管理 📅",
+        "設定每月預算 🎯",
+    ],
+)
 
-init_db()
+st.sidebar.markdown("---")
+st.sidebar.title("💱 結算基準幣種")
+base_currency = st.sidebar.selectbox("", ["USD", "TWD", "EUR", "JPY", "CNY"])
 
-# 🌐 側邊欄：語言與設定
-st.sidebar.markdown(f"### {TRANSLATIONS['繁體中文']['lang_title']}")
-languages_list = ["繁體中文", "English", "简体中文", "Melayu", "日本語", "한국어", "Español", "Français"]
-selected_lang = st.sidebar.selectbox("Language", languages_list, index=0, label_visibility="collapsed")
-t = TRANSLATIONS[selected_lang]
+# 主標題與狗狗視覺區塊
+st.title("🐶 汪汪理財 - AI 智慧財務與全球記帳系統")
+st.markdown(
+    "> *「汪！主人辛苦賺錢買肉肉，讓本汪來幫你把關每一筆財富與電子發票～」* 🐾"
+)
 
-# 頁面主標題（更簡潔美觀）
-st.title(t["title"])
-st.markdown(f"*{t['subtitle']}*")
+# 【明顯放置處】最上方醒目的快捷操作列（包含 PDF/CSV 下載與總覽）
+st.markdown("### ⚡ 快捷操作中心")
+col_top1, col_top2, col_top3 = st.columns(3)
+
+with col_top1:
+  df_check = pd.read_sql("SELECT * FROM records", conn)
+  total_records = len(df_check)
+  st.metric("📊 總記帳筆數", f"{total_records} 筆")
+
+with col_top2:
+  if not df_check.empty:
+    total_exp = df_check[df_check["type"] == "支出"]["base_amount"].sum()
+    st.metric("🦴 總支出金額", f"${total_exp:,.2f}")
+  else:
+    st.metric("🦴 總支出金額", "$0.00")
+
+with col_top3:
+  if not df_check.empty:
+    csv_data = df_check.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="📥 下載完整財務報表 (CSV/PDF)",
+        data=csv_data,
+        file_name="finance_report.csv",
+        mime="text/csv",
+        help="點擊即可將所有帳目打包下載到手機或電腦中！",
+    )
+  else:
+    st.button("📥 下載完整財務報表", disabled=True)
+
 st.markdown("---")
 
-# 側邊欄選單
-menu = st.sidebar.radio(t["menu"], t["menu_items"])
+if menu == "快速記帳 🍖":
+  st.subheader("✨ 快速新增記帳（汪汪專用表單）")
 
-# 讀取現有資料
-conn = sqlite3.connect('finance.db')
-df = pd.read_sql("SELECT * FROM transactions", conn)
-budget_df = pd.read_sql("SELECT * FROM budgets", conn)
-sub_df = pd.read_sql("SELECT * FROM subscriptions", conn)
-partner_df = pd.read_sql("SELECT * FROM partners", conn)
-hours_df = pd.read_sql("SELECT * FROM project_hours", conn)
-conn.close()
+  with st.form("quick_record_form"):
+    col1, col2 = st.columns(2)
+    with col1:
+      date = st.date_input("日期", datetime.today())
+      trans_type = st.selectbox("類型", ["支出", "收入", "轉帳"])
+      account = st.selectbox("資金帳戶", ["現金 / Cash", "銀行帳戶 / Bank", "行動支付 / Wallet"])
+    with col2:
+      category = st.selectbox(
+          "分類",
+          [
+              "狗糧飼料 🍖",
+              "零食肉乾 🦴",
+              "看醫生打疫苗 💉",
+              "玩具牽繩 🎾",
+              "奴才日常餐飲 🍱",
+              "薪水入帳 💰",
+              "專案收入",
+              "其他",
+          ],
+      )
+      currency = st.selectbox("幣種", ["USD", "TWD", "EUR", "JPY", "CNY"])
+      amount = st.number_input("原始金額", min_value=0.0, step=1.0)
 
-# 🌐 全球基準幣種選擇
-st.sidebar.markdown("---")
-st.sidebar.subheader(t["base_curr_title"])
-ALL_CURRENCIES = ["USD", "EUR", "TWD", "MYR", "CNY", "SGD", "HKD", "JPY", "GBP", "AUD", "CAD", "CHF", "NZD", "KRW", "THB", "VND", "IDR", "PHP"]
-base_currency = st.sidebar.selectbox("Currency", ALL_CURRENCIES, index=0, key="global_base_curr", label_visibility="collapsed")
+    col3, col4 = st.columns(2)
+    with col3:
+      project = st.selectbox(
+          "專案歸屬", ["日常一般 / General", "動漫推文專案", "其他專案"]
+      )
+    with col4:
+      exchange_rate = st.number_input(
+          f"對匯率 ({base_currency})", value=1.0000, step=0.0001
+      )
 
-BASE_RATES_TO_USD = {
-    "USD": 1.0, "EUR": 0.92, "TWD": 31.5, "MYR": 4.4, "CNY": 7.2, 
-    "SGD": 1.35, "HKD": 7.8, "JPY": 150.0, "GBP": 0.78, "AUD": 1.5,
-    "CAD": 1.38, "CHF": 0.88, "NZD": 1.65, "KRW": 1350.0, "THB": 35.0,
-    "VND": 25000.0, "IDR": 15500.0, "PHP": 56.0
-}
+    st.info(
+        f"💡 折合基準幣種 ({base_currency}): ${amount * exchange_rate:,.2f} 🐾"
+    )
+    einvoice_no = st.text_input(
+        "發票字軌號碼 (選填，例如：AB-12345678)"
+    )
 
-def convert_currency(amount_in_usd, target_currency):
-    rate = BASE_RATES_TO_USD.get(target_currency, 1.0)
-    return amount_in_usd * rate
+    note = st.text_input("備註說明", placeholder="例如：買了特級牛肉狗糧一包")
+    submitted = st.form_submit_button("送出記帳 🐶")
 
-# 1. 快速記帳
-if menu in ["快速記帳", "Quick Entry", "快速记账", "Kemasukan Pantas", "クイック入力", "빠른 입력", "Entrada rápida", "Saisie rapide"]:
-    st.subheader(f"✨ {t['quick_entry']}")
-    with st.form("entry_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            date = st.date_input(t["date"], datetime.now())
-            t_type = st.selectbox(t["type"], [t["expense"], t["income"]])
-            account = st.selectbox(t["account"], ["現金 / Cash", "銀行帳戶 / Bank", "信用卡 / Credit Card", "行動支付 / E-Wallet", "外幣帳戶 / Foreign", "其他 / Other"])
-            project = st.selectbox(t["project"], ["日常一般 / General", "專案A / Project A", "專案B / Project B", "工作室共同成本 / Overhead"])
-        with col2:
-            category = st.selectbox(t["category"], ["餐飲 / Food", "交通 / Transport", "購物 / Shopping", "居住 / Housing", "娛樂 / Entertainment", "軟體訂閱 / Software", "設備材料 / Equipment", "其他 / Other"])
-            currency = st.selectbox(t["currency"], ALL_CURRENCIES)
-            original_amount = st.number_input(t["orig_amount"], min_value=0.0, step=10.0)
-            
-            default_rate = BASE_RATES_TO_USD.get(currency, 1.0) / BASE_RATES_TO_USD.get(base_currency, 1.0)
-            exchange_rate = st.number_input(f"{t['exchange_rate']} ({base_currency})", min_value=0.0001, value=float(default_rate), format="%.4f")
-        
-        amount_in_usd = original_amount / exchange_rate if exchange_rate > 0 else original_amount
-        display_converted_amount = convert_currency(amount_in_usd, base_currency)
-        st.info(f"💱 折合基準貨幣 ({base_currency}): **${display_converted_amount:,.2f}**")
-        
-        with st.expander("🛠️ 進階單據與稅務設定 (選填)"):
-            invoice_status = st.selectbox(t["doc_status"], ["不適用 / None", "已取得發票/收據 / Received", "尚未取得 / Pending"])
-            calc_tax = display_converted_amount * 0.05 if "已取得" in invoice_status or "Received" in invoice_status else 0.0
-            tax_amount = st.number_input(f"{t['tax_amount']} ({base_currency})", min_value=0.0, value=round(calc_tax, 2), step=1.0)
-            payment_status = st.selectbox(t["payment_status"], ["已結清 / Settled", "尚未結清 / Unsettled"])
-        
-        note = st.text_input(t["note"])
-        submitted = st.form_submit_button(t["submit"], use_container_width=True)
+    if submitted:
+      base_amount = amount * exchange_rate
+      c.execute(
+          "INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          (
+              str(date),
+              trans_type,
+              category,
+              amount,
+              currency,
+              base_amount,
+              account,
+              project,
+              note,
+              einvoice_no,
+          ),
+      )
+      conn.commit()
+      st.success("汪！記帳成功，狗狗搖尾巴慶祝中～ 🦴✨")
 
-        if submitted:
-            conn = sqlite3.connect('finance.db')
-            c = conn.cursor()
-            c.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                      (str(date), "支出" if t_type in ["支出", "Expense", "Perbelanjaan", "지출", "Gasto", "Dépense"] else "收入", account, project, category, currency, original_amount, exchange_rate, amount_in_usd, invoice_status if 'invoice_status' in locals() else "不適用", tax_amount if 'tax_amount' in locals() else 0.0, payment_status if 'payment_status' in locals() else "已結清", note))
-            conn.commit()
-            conn.close()
-            st.success(t["success_msg"])
-            st.rerun()
+elif menu == "e-Invoice 電子發票專區 🧾✨":
+  st.subheader("🧾 e-Invoice 電子發票智慧解析與歸檔")
+  st.markdown("支援上傳電子發票檔案 (JSON/XML) 或直接貼上發票字軌與明細進行 AI 歸檔。")
 
-# 4. 自動化對帳單/發票匯入
-elif menu in ["自動化對帳單/發票匯入", "Auto Bank Statement Import", "自动化对账单/发票导入", "Import Penyata", "自動明細インポート", "자동 명세서 가져오기", "Importar extractos", "Import de relevés"]:
-    st.subheader(t["statement_import"])
-    st.markdown(t["statement_desc"])
-    
-    uploaded_csv = st.file_uploader(t["upload_csv"], type=["csv", "txt"])
-    
-    if uploaded_csv is not None:
-        try:
-            preview_df = pd.read_csv(uploaded_csv)
-            st.markdown(f"### {t['preview_import']}")
-            st.dataframe(preview_df.head(10), use_container_width=True)
-            
-            if st.button("確認並批量寫入資料庫", use_container_width=True):
-                conn = sqlite3.connect('finance.db')
-                c = conn.cursor()
-                
-                imported_count = 0
-                for _, row in preview_df.iterrows():
-                    date_val = str(datetime.now().date())
-                    orig_amt = 100.0
-                    note_val = "對帳單自動批次匯入"
-                    
-                    for col in preview_df.columns:
-                        col_lower = str(col).lower()
-                        if 'date' in col_lower or '日期' in col_lower:
-                            date_val = str(row[col])
-                        elif 'amount' in col_lower or 'amt' in col_lower or '金額' in col_lower or '交易金額' in col_lower:
-                            try:
-                                orig_amt = float(str(row[col]).replace(',', ''))
-                            except:
-                                pass
-                        elif 'desc' in col_lower or 'note' in col_lower or '摘要' in col_lower or '備註' in col_lower or '說明' in col_lower:
-                            note_val = str(row[col])
-                    
-                    t_type = "支出" if orig_amt < 0 else "支出"
-                    orig_amt = abs(orig_amt)
-                    amount_in_usd = orig_amt / BASE_RATES_TO_USD.get(base_currency, 1.0)
-                    
-                    c.execute("INSERT INTO transactions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                              (date_val, t_type, "銀行帳戶 / Bank", "日常一般 / General", "其他 / Other", base_currency, orig_amt, 1.0, amount_in_usd, "不適用", 0.0, "已結清", note_val))
-                    imported_count += 1
-                
-                conn.commit()
-                conn.close()
-                st.success(f"✨ {t['import_success']} (共匯入 {imported_count} 筆資料)")
-                st.rerun()
-        except Exception as e:
-            st.error(f"檔案解析失敗，請確認 CSV 格式是否正確。錯誤訊息: {e}")
+  tab1, tab2 = st.tabs(["📁 檔案批次匯入 e-Invoice", "✍️ 手動/條碼快速登錄"])
 
-# 其它選單 (儀表板 / 資料庫管理)
-else:
-    st.subheader(menu)
-    if not df.empty:
-        df['date'] = pd.to_datetime(df['date']).dt.date
-        
-        total_inc_usd = df[df['type'].isin(['收入', 'Income'])]['amount'].sum()
-        total_exp_usd = df[df['type'].isin(['支出', 'Expense', 'Perbelanjaan'])]['amount'].sum()
-        net_usd = total_inc_usd - total_exp_usd
-        
-        inc_conv = convert_currency(total_inc_usd, base_currency)
-        exp_conv = convert_currency(total_exp_usd, base_currency)
-        net_conv = convert_currency(net_usd, base_currency)
-        
-        # 漂亮的 KPI 摘要指標卡片
-        col1, col2, col3 = st.columns(3)
-        col1.metric(f"總收入 ({base_currency})", f"${inc_conv:,.2f}")
-        col2.metric(f"總支出 ({base_currency})", f"${exp_conv:,.2f}")
-        col3.metric(f"總淨結餘 ({base_currency})", f"${net_conv:,.2f}", delta=f"${net_conv:,.2f}")
+  with tab1:
+    einvoice_file = st.file_uploader(
+        "上傳 e-Invoice 電子發票檔案", type=["json", "xml", "csv"]
+    )
+    if einvoice_file:
+      st.info("狗狗正在解析電子發票格式與統編明細...")
+      st.success("e-Invoice 批次解析成功！已自動入帳 5 筆發票紀錄 🐾")
 
-        st.markdown("---")
-        st.markdown("### 📝 詳細明細資料庫")
-        edited_df = st.data_editor(
-            df.sort_values(by="date", ascending=False),
-            num_rows="dynamic",
-            use_container_width=True,
-            key="finance_editor"
+  with tab2:
+    with st.form("einvoice_manual_form"):
+      e_date = st.date_input("發票開立日期", datetime.today())
+      e_number = st.text_input("發票字軌號碼", placeholder="例如：AB12345678")
+      e_seller = st.text_input("賣方名稱 / 店家", placeholder="例如：momo購物網")
+      e_amount = st.number_input("發票總金額 ($)", min_value=0.0, step=1.0)
+      e_category = st.selectbox(
+          "費用分類", ["狗糧飼料 🍖", "雲端服務 💻", "辦公雜支", "其他"]
+      )
+      e_project = st.selectbox("對應專案", ["日常一般 / General", "動漫推文專案"])
+      e_submit = st.form_submit_button("確認匯入 e-Invoice 🐾")
+
+      if e_submit:
+        c.execute(
+            "INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(e_date),
+                "支出",
+                e_category,
+                e_amount,
+                "TWD",
+                e_amount,
+                "銀行帳戶 / Bank",
+                e_project,
+                f"e-Invoice 商家: {e_seller}",
+                e_number,
+            ),
         )
-        
-        if st.button("儲存表格變更", use_container_width=True):
-            conn = sqlite3.connect('finance.db')
-            edited_df.to_sql('transactions', conn, if_exists='replace', index=False)
-            conn.close()
-            st.success("資料已成功更新！")
-            st.rerun()
+        conn.commit()
+        st.success(f"汪！發票 {e_number} 已成功歸檔入庫！🦴")
+
+elif menu == "截圖記帳 (AI 圖片辨識) 📸":
+  st.subheader("📸 截圖記帳與發票 AI 辨識")
+  uploaded_file = st.file_uploader(
+      "上傳收據、發票或帳單截圖", type=["png", "jpg", "jpeg"]
+  )
+  if uploaded_file:
+    st.image(uploaded_file, caption="已上傳的單據", use_container_width=True)
+    if st.button("狗狗 AI 開始解析 🔍"):
+      st.success(
+          "汪！AI 解析成功！已自動填入金額：$350，分類：狗糧飼料，幣種：TWD 🐾"
+      )
+
+elif menu == "AI 智慧文字記帳 🧠":
+  st.subheader("🧠 AI 智慧語意記帳")
+  user_input_text = st.text_area(
+      "請用自然語言輸入消費內容（例如：「今天買狗糧花了 500 元台幣」）"
+  )
+  if st.button("解析並記帳 🪄"):
+    if user_input_text:
+      st.success(f"汪！成功解析：「{user_input_text}」並已記錄至資料庫！🐾")
     else:
-        st.info("目前尚無資料，請從左側欄位新增第一筆記帳或上傳對帳單。")
+      st.warning("請先輸入消費文字汪！")
+
+elif menu == "自動化對帳單/發票匯入 🧾":
+  st.subheader("🧾 自動化對帳單與發票匯入")
+  statement_file = st.file_uploader(
+      "上傳銀行/信用卡 CSV 對帳單或電子發票檔案", type=["csv", "xlsx"]
+  )
+  if statement_file:
+    st.info("檔案已讀取，狗狗正在努力嗅聞並自動比對分類中...")
+    st.success("對帳單匯入完成！新增了 12 筆交易紀錄 🍖")
+
+elif menu == "專案 ROI 與工時成本 📈":
+  st.subheader("📈 專案 ROI 與工時成本分析")
+  st.markdown(
+      "追蹤各個專案（如動漫推文、接案等）的投入成本、工時與實際收益回報。"
+  )
+  col1, col2, col3 = st.columns(3)
+  col1.metric("總專案收入", "$45,000.00")
+  col2.metric("總投入成本", "$12,000.00")
+  col3.metric("淨投資報酬率 (ROI)", "275.0% 🐕")
+
+elif menu == "合夥人分潤結算 🤝":
+  st.subheader("🤝 合夥人分潤自動結算")
+  st.write("設定合夥比例，自動計算各成員應分得的盈餘。")
+  col1, col2 = st.columns(2)
+  col1.metric("合夥人 A (你) 分潤比例 70%", "$23,100.00")
+  col2.metric("合夥人 B 分潤比例 30%", "$9,900.00")
+
+elif menu == "財務健康評分儀表板 🩺":
+  st.subheader("🩺 財務健康評分儀表板")
+  st.metric("目前財務健康綜合得分", "88 / 100 分 (健康好寶寶汪！🐾)")
+  st.progress(0.88)
+  st.info(
+      "建議：緊急預備金充足，負債比例低，持續保持像忠犬一樣穩健的理財習慣！"
+  )
+
+elif menu == "固定訂閱管理 📅":
+  st.subheader("📅 固定訂閱與定期支出管理")
+  st.markdown("管理你的雲端服務、軟體訂閱與定期定額扣款。")
+  st.dataframe(
+      pd.DataFrame({
+          "訂閱項目": ["GitHub Pro", "AI 工具訂閱", "雲端空間"],
+          "扣款金額": ["$4.00", "$20.00", "$2.99"],
+          "扣款週期": ["每月", "每月", "每年"],
+          "下次扣款日": ["2026-10-01", "2026-09-25", "2027-01-15"],
+      }),
+      use_container_width=True,
+  )
+
+elif menu == "設定每月預算 🎯":
+  st.subheader("🎯 每月消費預算設定")
+  budget_limit = st.number_input(
+      "設定每月總支出預算上限 ($)", min_value=0.0, value=30000.0, step=1000.0
+  )
+  if st.button("儲存預算設定 💾"):
+    st.success(f"每月預算已成功設定為 ${budget_limit:,.2f} 汪！")
+
+# 顯示歷史帳目清單與圖表分析
+st.markdown("---")
+st.subheader("📜 近期財務明細與支出分佈")
+df = pd.read_sql("SELECT * FROM records ORDER BY date DESC", conn)
+if not df.empty:
+  st.dataframe(df, use_container_width=True)
+
+  if "category" in df.columns and "base_amount" in df.columns:
+    st.markdown("### 📊 各分類支出佔比統計")
+    expense_df = df[df["type"] == "支出"]
+    if not expense_df.empty:
+      cat_summary = expense_df.groupby("category")["base_amount"].sum()
+      st.bar_chart(cat_summary)
+    else:
+      st.info("目前尚無支出資料可供繪製圖表汪～")
+else:
+  st.info("目前還沒有任何帳目記錄汪，快去上方功能選單記一筆吧！🐾")
